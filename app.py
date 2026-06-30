@@ -203,6 +203,57 @@ INDEX_HTML = """<!doctype html>
       min-height: 112px;
       resize: vertical;
     }
+    .chat-panel {
+      min-height: 430px;
+      display: grid;
+      gap: 14px;
+    }
+    .chat-window {
+      min-height: 320px;
+      display: grid;
+      grid-template-rows: minmax(150px, 1fr) auto;
+      gap: 14px;
+    }
+    .message-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      margin-bottom: 6px;
+    }
+    .message-heading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .message-heading .message-meta {
+      margin-bottom: 0;
+    }
+    .agent-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid #cbd3dc;
+      border-top-color: #64748b;
+      border-radius: 999px;
+      opacity: .45;
+      flex: 0 0 auto;
+    }
+    .agent-spinner.is-running {
+      border-color: #9fc8b8;
+      border-top-color: var(--accent);
+      opacity: 1;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .composer {
+      display: grid;
+      gap: 10px;
+    }
+    .composer textarea {
+      min-height: 150px;
+    }
     .row {
       display: grid;
       grid-template-columns: 140px 1fr;
@@ -249,23 +300,6 @@ INDEX_HTML = """<!doctype html>
       cursor: wait;
       opacity: .65;
     }
-    pre {
-      margin: 0;
-      white-space: pre-wrap;
-      word-break: break-word;
-      background: #101820;
-      color: #e7eef7;
-      border-radius: 6px;
-      padding: 12px;
-      min-height: 120px;
-      font-size: 13px;
-    }
-    .preview {
-      max-width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      display: none;
-    }
     .hint {
       margin-top: 8px;
       color: var(--muted);
@@ -274,10 +308,11 @@ INDEX_HTML = """<!doctype html>
     .error { color: var(--danger); }
     .agent-message {
       margin: 0;
-      min-height: 64px;
-      padding: 12px 14px;
+      min-height: 150px;
+      padding: 14px 16px;
       border-left: 4px solid #64748b;
       background: #f6f8fa;
+      border-radius: 6px;
       white-space: pre-wrap;
       word-break: break-word;
     }
@@ -306,6 +341,8 @@ INDEX_HTML = """<!doctype html>
       .row { grid-template-columns: 1fr; }
       .key-row { grid-template-columns: 1fr; }
       .actions { justify-content: stretch; }
+      .chat-panel { min-height: 0; }
+      .chat-window { min-height: 0; }
       button { width: 100%; }
     }
   </style>
@@ -323,9 +360,30 @@ INDEX_HTML = """<!doctype html>
       <p class="sub">输入目标任务，后端会持续截图、询问 MiMo 并执行 JSON 计划；点击动作后 0.5 秒会截图复查。</p>
     </header>
 
+    <section class="panel chat-panel" aria-live="polite">
+      <label for="task">任务对话</label>
+      <div class="chat-window">
+        <div>
+          <div class="message-heading">
+            <p class="message-meta">智能体回复</p>
+            <span class="agent-spinner" id="agentSpinner" title="程序运行状态" aria-hidden="true"></span>
+          </div>
+          <p class="agent-message" id="agentMessage" data-kind="info">模型暂时没有需要告诉你的消息。</p>
+        </div>
+        <div class="composer">
+          <p class="message-meta">你的消息</p>
+          <textarea id="task" placeholder="输入目标任务；如果智能体向你提问，就在这里回复并继续发送。"></textarea>
+          <div class="actions">
+            <button class="secondary" id="dryRunBtn">只生成计划</button>
+            <button class="secondary" id="pauseBtn">暂停智能体</button>
+            <button id="runBtn">发送并执行</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint">发送后请切回目标窗口，程序会自动截图、判断并继续执行。</p>
+    </section>
+
     <section class="panel">
-      <label for="task">目标 / 回复</label>
-      <textarea id="task" placeholder="输入目标任务；如果智能体向你提问，就在这里回复并继续发送。"></textarea>
       <div class="field">
         <label for="apiKey">MiMo API Key</label>
         <div class="key-row">
@@ -344,34 +402,6 @@ INDEX_HTML = """<!doctype html>
           <input id="baseUrl" value="https://api.xiaomimimo.com/v1">
         </div>
       </div>
-      <div class="row">
-        <div>
-          <label for="delay">截图前等待秒数</label>
-          <input id="delay" type="number" min="0" max="30" step="1" value="3">
-        </div>
-        <div class="actions">
-          <button class="secondary" id="dryRunBtn">只生成计划</button>
-          <button class="secondary" id="pauseBtn">暂停智能体</button>
-          <button id="runBtn">发送并执行</button>
-        </div>
-      </div>
-      <p class="hint">建议保留 3 秒：点击按钮后立刻切到你想操作的应用窗口。</p>
-    </section>
-
-    <section class="panel" aria-live="polite">
-      <label>智能体消息</label>
-      <p class="agent-message" id="agentMessage" data-kind="info">模型暂时没有需要告诉你的消息。</p>
-    </section>
-
-    <section class="panel">
-      <label>运行结果</label>
-      <pre id="log">等待任务...</pre>
-    </section>
-
-    <section class="panel">
-      <label>本次发送给模型的截图</label>
-      <img class="preview" id="preview" alt="截图预览">
-      <p class="hint">如果这里显示的是本网页，说明截图前没有及时切回目标窗口。</p>
     </section>
   </main>
   </div>
@@ -381,10 +411,8 @@ INDEX_HTML = """<!doctype html>
     const apiKeyEl = document.getElementById('apiKey');
     const modelEl = document.getElementById('model');
     const baseUrlEl = document.getElementById('baseUrl');
-    const delayEl = document.getElementById('delay');
-    const logEl = document.getElementById('log');
     const agentMessageEl = document.getElementById('agentMessage');
-    const previewEl = document.getElementById('preview');
+    const agentSpinnerEl = document.getElementById('agentSpinner');
     const runBtn = document.getElementById('runBtn');
     const dryRunBtn = document.getElementById('dryRunBtn');
     const pauseBtn = document.getElementById('pauseBtn');
@@ -397,6 +425,7 @@ INDEX_HTML = """<!doctype html>
     const CURRENT_SESSION_STORAGE_KEY = 'mimo_agent_current_session_v1';
     const PAYG_BASE_URL = 'https://api.xiaomimimo.com/v1';
     const TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1';
+    const DEFAULT_SCREENSHOT_DELAY_SECONDS = 3;
     let clientRunVersion = 0;
     let sessions = readSessions();
     let currentSessionId = localStorage.getItem(CURRENT_SESSION_STORAGE_KEY);
@@ -455,9 +484,8 @@ INDEX_HTML = """<!doctype html>
         id: makeSessionId(),
         title,
         draft: '',
-        lastLog: '等待任务...',
         lastMessage: null,
-        screenshotDataUrl: '',
+        lastStatus: '等待任务...',
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -485,12 +513,10 @@ INDEX_HTML = """<!doctype html>
     function persistCurrentSession() {
       const session = currentSession();
       session.draft = taskEl.value;
-      session.lastLog = logEl.textContent;
       session.lastMessage = {
         text: agentMessageEl.textContent,
         kind: agentMessageEl.dataset.kind || 'info'
       };
-      session.screenshotDataUrl = previewEl.getAttribute('src') || '';
       session.updatedAt = Date.now();
       if (taskEl.value.trim()) {
         session.title = titleFromText(taskEl.value);
@@ -501,21 +527,12 @@ INDEX_HTML = """<!doctype html>
 
     function restoreSession(session) {
       taskEl.value = session.draft || '';
-      logEl.className = '';
-      logEl.textContent = session.lastLog || '等待任务...';
       const message = session.lastMessage;
       if (message && message.text) {
         agentMessageEl.dataset.kind = message.kind || 'info';
         agentMessageEl.textContent = message.text;
       } else {
         showAgentMessage(null);
-      }
-      if (session.screenshotDataUrl) {
-        previewEl.src = session.screenshotDataUrl;
-        previewEl.style.display = 'block';
-      } else {
-        previewEl.removeAttribute('src');
-        previewEl.style.display = 'none';
       }
     }
 
@@ -555,12 +572,15 @@ INDEX_HTML = """<!doctype html>
       runBtn.disabled = busy;
       dryRunBtn.disabled = busy;
       pauseBtn.disabled = false;
+      agentSpinnerEl.classList.toggle('is-running', busy);
     }
 
     function writeLog(value, isError = false) {
-      logEl.className = isError ? 'error' : '';
-      logEl.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-      persistCurrentSession();
+      const session = currentSession();
+      session.lastStatus = typeof value === 'string' ? value : JSON.stringify(value);
+      session.updatedAt = Date.now();
+      saveSessions();
+      renderSessions();
     }
 
     function showAgentMessage(message, fallbackKind = 'info') {
@@ -577,11 +597,11 @@ INDEX_HTML = """<!doctype html>
     async function act(dryRun) {
       const task = taskEl.value.trim();
       if (!task) {
-        writeLog('请先输入目标任务。', true);
+        showAgentMessage('请先输入目标任务。', 'error');
         return;
       }
       const runVersion = ++clientRunVersion;
-      const delay = Number(delayEl.value || 0);
+      const delay = DEFAULT_SCREENSHOT_DELAY_SECONDS;
       const apiKey = apiKeyEl.value.trim();
       const model = modelEl.value.trim();
       const baseUrl = baseUrlEl.value.trim();
@@ -592,8 +612,8 @@ INDEX_HTML = """<!doctype html>
       saveSessions();
       renderSessions();
       setBusy(true);
-      writeLog(`已提交。${delay > 0 ? delay + ' 秒内请切回目标窗口...' : '正在截图...'}`);
-      showAgentMessage('任务已提交，正在等待模型判断。');
+      writeLog(`已提交。${delay} 秒内请切回目标窗口...`);
+      showAgentMessage(`任务已提交。请在 ${delay} 秒内切回目标窗口，我会截图并继续判断。`);
       try {
         const response = await fetch('/act', {
           method: 'POST',
@@ -609,11 +629,6 @@ INDEX_HTML = """<!doctype html>
           writeLog(errorMessage, true);
           showAgentMessage(errorMessage, 'error');
           return;
-        }
-        if (data.screenshot_data_url) {
-          previewEl.src = data.screenshot_data_url;
-          previewEl.style.display = 'block';
-          persistCurrentSession();
         }
         showAgentMessage(data.user_message);
         writeLog(data);
@@ -667,6 +682,7 @@ INDEX_HTML = """<!doctype html>
       const session = createSession('新任务');
       restoreSession(session);
       renderSessions();
+      setBusy(false);
       showAgentMessage('已添加新的智能体窗口；这里会从空白上下文开始。', 'info');
     });
 
