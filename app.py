@@ -162,6 +162,31 @@ INDEX_HTML = """<!doctype html>
       border-color: #8fc5ad;
       color: #14543d;
     }
+    .session-context-menu {
+      position: fixed;
+      z-index: 20;
+      min-width: 128px;
+      padding: 6px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, .18);
+    }
+    .session-context-menu[hidden] {
+      display: none;
+    }
+    .session-menu-item {
+      width: 100%;
+      padding: 8px 10px;
+      text-align: left;
+      background: #fff;
+      color: var(--danger);
+      border: 0;
+      font-weight: 700;
+    }
+    .session-menu-item:hover {
+      background: #fee2e2;
+    }
     main {
       width: min(1040px, calc(100vw - 32px));
       margin: 28px auto;
@@ -357,7 +382,6 @@ INDEX_HTML = """<!doctype html>
   <main>
     <header>
       <h1>电脑智能体规划器</h1>
-      <p class="sub">输入目标任务，后端会持续截图、询问 MiMo 并执行 JSON 计划；点击动作后 0.5 秒会截图复查。</p>
     </header>
 
     <section class="panel chat-panel" aria-live="polite">
@@ -405,6 +429,9 @@ INDEX_HTML = """<!doctype html>
     </section>
   </main>
   </div>
+  <div class="session-context-menu" id="sessionContextMenu" hidden>
+    <button class="session-menu-item" id="deleteSessionMenuBtn" type="button">删除窗口</button>
+  </div>
 
   <script>
     const taskEl = document.getElementById('task');
@@ -418,6 +445,8 @@ INDEX_HTML = """<!doctype html>
     const pauseBtn = document.getElementById('pauseBtn');
     const addSessionBtn = document.getElementById('addSessionBtn');
     const sessionListEl = document.getElementById('sessionList');
+    const sessionContextMenuEl = document.getElementById('sessionContextMenu');
+    const deleteSessionMenuBtn = document.getElementById('deleteSessionMenuBtn');
     const rememberApiBtn = document.getElementById('rememberApiBtn');
     const apiKeyStatusEl = document.getElementById('apiKeyStatus');
     const API_CONFIG_STORAGE_KEY = 'mimo_agent_api_config_v1';
@@ -429,6 +458,7 @@ INDEX_HTML = """<!doctype html>
     let clientRunVersion = 0;
     let sessions = readSessions();
     let currentSessionId = localStorage.getItem(CURRENT_SESSION_STORAGE_KEY);
+    let contextMenuSessionId = '';
 
     function readSavedApiConfig() {
       try {
@@ -536,6 +566,67 @@ INDEX_HTML = """<!doctype html>
       }
     }
 
+    async function deleteServerSession(sessionId, stopCurrent) {
+      try {
+        await fetch('/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'delete_session',
+            session_id: sessionId,
+            stop_current: Boolean(stopCurrent)
+          })
+        });
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+
+    async function deleteSession(sessionId) {
+      const session = sessions.find(item => item.id === sessionId);
+      if (!session) {
+        return;
+      }
+      const deletingCurrent = sessionId === currentSessionId;
+      if (deletingCurrent) {
+        ++clientRunVersion;
+        setBusy(false);
+      }
+      sessions = sessions.filter(item => item.id !== sessionId);
+      await deleteServerSession(sessionId, deletingCurrent);
+      if (!sessions.length) {
+        const fresh = createSession('新任务');
+        restoreSession(fresh);
+      } else if (deletingCurrent) {
+        currentSessionId = sessions[0].id;
+        saveSessions();
+        restoreSession(sessions[0]);
+      } else {
+        saveSessions();
+      }
+      renderSessions();
+      if (deletingCurrent) {
+        showAgentMessage('已删除当前智能体窗口，并切换到新的窗口。', 'info');
+      }
+    }
+
+    function hideSessionMenu() {
+      sessionContextMenuEl.hidden = true;
+      contextMenuSessionId = '';
+    }
+
+    function showSessionMenu(event, sessionId) {
+      event.preventDefault();
+      contextMenuSessionId = sessionId;
+      const menuWidth = 140;
+      const menuHeight = 44;
+      const left = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+      const top = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+      sessionContextMenuEl.style.left = Math.max(8, left) + 'px';
+      sessionContextMenuEl.style.top = Math.max(8, top) + 'px';
+      sessionContextMenuEl.hidden = false;
+    }
+
     function renderSessions() {
       sessionListEl.innerHTML = '';
       sessions.forEach(session => {
@@ -551,6 +642,10 @@ INDEX_HTML = """<!doctype html>
           restoreSession(session);
           renderSessions();
         });
+        button.addEventListener('contextmenu', (event) => {
+          showSessionMenu(event, session.id);
+        });
+
         sessionListEl.appendChild(button);
       });
     }
@@ -668,6 +763,7 @@ INDEX_HTML = """<!doctype html>
     });
 
     addSessionBtn.addEventListener('click', async () => {
+      hideSessionMenu();
       persistCurrentSession();
       ++clientRunVersion;
       try {
@@ -685,6 +781,23 @@ INDEX_HTML = """<!doctype html>
       setBusy(false);
       showAgentMessage('已添加新的智能体窗口；这里会从空白上下文开始。', 'info');
     });
+
+    deleteSessionMenuBtn.addEventListener('click', async () => {
+      const sessionId = contextMenuSessionId;
+      hideSessionMenu();
+      await deleteSession(sessionId);
+    });
+    document.addEventListener('click', (event) => {
+      if (!sessionContextMenuEl.contains(event.target)) {
+        hideSessionMenu();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        hideSessionMenu();
+      }
+    });
+    window.addEventListener('scroll', hideSessionMenu, true);
 
     rememberApiBtn.addEventListener('click', () => {
       const apiKey = apiKeyEl.value.trim();
@@ -806,6 +919,15 @@ def get_agent_session(session_id):
             session = make_empty_session(normalized)
             AGENT_SESSIONS[normalized] = session
         return session
+
+
+def delete_agent_session(session_id):
+    normalized = str(session_id or "").strip()
+    if not normalized:
+        return {"deleted": False, "session_id": normalized}
+    with AGENT_SESSION_LOCK:
+        deleted = AGENT_SESSIONS.pop(normalized, None) is not None
+    return {"deleted": deleted, "session_id": normalized}
 
 
 def trim_session_history(session_state):
@@ -1684,6 +1806,16 @@ class Handler(BaseHTTPRequestHandler):
                 message = {
                     "show": True,
                     "text": "旧运行已结束；左侧“添加”会创建新的智能体窗口。",
+                    "kind": "info",
+                }
+            elif action == "delete_session":
+                session_id = str(payload.get("session_id", "")).strip()
+                result = delete_agent_session(session_id)
+                if bool(payload.get("stop_current", False)):
+                    result["control"] = AGENT_CONTROLLER.replace_current()
+                message = {
+                    "show": True,
+                    "text": "已删除智能体窗口。",
                     "kind": "info",
                 }
             else:
